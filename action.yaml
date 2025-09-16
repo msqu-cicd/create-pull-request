@@ -1,115 +1,130 @@
 ---
-name: "Gitea Auto-PR"
-description: Create a new PR on Gitea.
+name: "Create PR"
+description: 'Commit and create PR'
 inputs:
-  url:
-    description: URL to the Gitea instance
+  base:
+    description: 'Base branch to create PR against'
     required: true
+    default: 'main'
   token:
-    description: Personal access token to the Gitea instance
+    description: 'PAT for creating PR'
     required: true
-  tea-version:
-    description: Tea CLI version
-    required: true
-    default: 0.9.2
-  pr-label:
-    description: Issues label for the PR
-  assignee:
-    description: User to assign the PR to
+  add-paths:
+    description: 'Paths to add to commit'
+    required: false
+    default: '.'
+  add-patterns:
+    description: 'Patterns to add to commit'
+    required: false
+    default: '*'
+  commit-message:
+    description: 'Commit message'
+    required: false
+    default: 'Automated commit'
+  pr-branch:
+    description: 'Branch to create PR from'
+    required: false
+    default: 'automated-pr'
+  pr-title:
+    description: 'PR title'
+    required: false
+    default: 'Automated PR'
+  pr-body:
+    description: 'PR body'
+    required: false
+    default: 'Automated PR'
+  pr-condition-cmd:
+    description: 'Command to check if PR should be created'
+    required: false
+    default: git status --porcelain
+  pr-assignee:
+    description: 'Default assignee for the Pull rrequest'
+    required: false
+    default: null
+  pr-automerge:
+    description: 'Whether to automatically merge the Pull Request'
+    required: false
+    default: 'false'
+  commit-user:
+    description: 'Username to use for commit'
+    required: false
+    default: 'Forgejo Bot'
+  commit-email:
+    description: 'Email to use for commit'
+    required: false
+    default: 'github@0815mail.de'
 
-branding:
-  icon: git-pull-request
-  color: green
+
 
 runs:
-  using: composite
+  using: "composite"
   steps:
-    - name: Check the OS of the runner
-      if: ${{ runner.os != 'Linux' }}
+    - run: |
+        git config --global user.name "${{ inputs.commit-user }}" >> $GITHUB_OUTPUT
+        git config --global user.email "${{ inputs.commit-email }}" >> $GITHUB_OUTPUT
+      shell: bash
+      name: "Configure git"
+    - name: "Pre-setup"
+      run: |
+        git fetch --all
+        git checkout -b "${{ inputs.pr-branch }}"
+      shell: bash
+    - name: "Check changes"
+      id: git
       shell: bash
       run: |
-        echo "::error title=⛔ error hint::Support Linux Only"
-        exit 1
-
-    - name: Check architecture of the runner
-      if: ${{ runner.arch != 'x64' }}
-      shell: bash
-      run: |
-        echo "::error title=⛔ error hint::Support x64 Architecture Only"
-        exit 1
-
-    - name: Get the commit message
+        if [[ -n "$(git status --porcelain)" ]]; then
+          echo changes=true >> $GITHUB_OUTPUT
+        else
+          echo changes=false >> $GITHUB_OUTPUT
+        fi
+    - name: "Commit and create PR"
+      if: steps.git.outputs.changes == 'true'
       id: commit
       shell: bash
+      env:
+        REPO: ${{ github.repository }}
       run: |
-        {
-          echo "COMMIT_MSG<<EOF"
-          git log -n 1 --format=%s
-          echo EOF
-        } >> "$GITHUB_OUTPUT"
-        {
-          echo "COMMIT_DESC<<EOF"
-          git log -n 1 --format=%b
-          echo EOF
-        } >> "$GITHUB_OUTPUT"
-
-    - name: Install Tea
-      env:
-        TEA_DL_URL: "https://dl.gitea.com/tea/${{ inputs.tea-version }}\
-          /tea-${{ inputs.tea-version }}-linux-amd64"
+        git add ${{ inputs.add-paths }} ${{ inputs.add-patterns }}
+        git commit -m "${{ inputs.commit-message }}"
+        git push --force-with-lease origin "${{ inputs.pr-branch }}"
+        echo "URL:  $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls"
+        response=$(curl -X 'POST' \
+          "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls" \
+          -H 'accept: application/json' \
+          -H 'Authorization: token ${{ inputs.token }}' \
+          -H 'Content-Type: application/json' \
+          -d '{
+          "assignee": "${{ inputs.pr-asignee }}",
+          "base": "${{ inputs.base }}",
+          "body": "${{ inputs.pr-body }}",
+          "head": "${{ inputs.pr-branch }}",
+          "title": "${{ inputs.pr-title }}"
+          }')
+        # echo $response | jq .
+        pr_number=$(echo $response | jq -r '.number')
+        echo "PR Number: $pr_number"
+        echo pr_number=$pr_number >> $GITHUB_OUTPUT
+    - name: "Auto merge PR"
       shell: bash
+      if: steps.git.outputs.changes == 'true' && steps.commit.outputs.pr_number != 'null'
+      env:
+        PR_NUMBER: ${{ steps.commit.outputs.pr_number }}
+        REPO: ${{ github.repository }}
       run: |
-        TEA_DIR=$(mktemp -d -t tmp.XXXX)
-        pushd $TEA_DIR
-        wget "$TEA_DL_URL"
-        wget "${TEA_DL_URL}.sha256"
-        if $(sha256sum --quiet -c "tea-${{ inputs.tea-version }}-linux-amd64.sha256"); then
-          mv "tea-${{ inputs.tea-version }}-linux-amd64" /usr/bin/tea
-          chmod +x /usr/bin/tea
-          popd
-          rm -rf $TEA_DIR
-        else
-          popd
-          rm -rf $TEA_DIR
-          echo "::error title=⛔ error hint::Tea v${{ inputs.tea-version }} Checksum Failed"
-          exit 1
-        fi
-
-    - name: Login to Gitea
-      shell: bash
-      env:
-        GIT_SERVER_URL: ${{ inputs.url }}
-        GIT_SERVER_TOKEN: ${{ inputs.token }}
-      run: >-
-        tea login add
-        -u "$GIT_SERVER_URL"
-        -t "$GIT_SERVER_TOKEN"
-
-    - name: Check for existing pull request
-      id: no-pr
-      continue-on-error: true
-      shell: bash
-      run: >-
-        tea pr -f head -o simple |
-        grep -q ${{ github.ref_name }} &&
-        exit 1 ||
-        exit 0
-
-    - name: Create pull request
-      if: steps.no-pr.outcome == 'success'
-      env:
-        COMMIT_MSG: ${{ steps.commit.outputs.COMMIT_MSG }}
-        COMMIT_DESC: ${{ steps.commit.outputs.COMMIT_DESC }}
-      shell: bash
-      run: >-
-        tea pr create -a "${{ inputs.assignee }}"
-        -L "${{ inputs.pr-label }}"
-        -t "$COMMIT_MSG"
-        -d "$COMMIT_DESC"
-
-    - name: Skip pull request
-      if: steps.no-pr.outcome == 'failure'
-      shell: bash
-      run: >
-          echo "::error title=⛔ error hint::
-          A PR already exists for this branch: ${{ github.ref_name }}"
+          echo "Settig auto merge for PR $PR_NUMBER"
+          echo "URL: $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge"
+          response=$(curl -X 'POST' \
+            "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge" \
+            -H 'accept: application/json' \
+            -H 'Authorization: token ${{ inputs.token }}' \
+            -H 'Content-Type: application/json' \
+            -d '{
+            "Do": "merge",
+            "merge_when_checks_succeed": true,
+            "delete_branch_after_merge": true
+            }')
+          echo $response
+branding:
+  icon: 'check'
+  color: 'blue'
