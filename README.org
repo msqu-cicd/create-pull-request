@@ -52,7 +52,7 @@ would look something like the following:
 
       steps:
         - name: Checkout repository
-          uses: actions/checkout@v2
+          uses: https://github.com/actions/checkout@v5
 
         - name: Create PR
           uses: arifer612/Gitea-PR-action@v1
