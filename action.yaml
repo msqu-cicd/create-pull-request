@@ -89,7 +89,7 @@ runs:
         git commit -m "${{ inputs.commit-message }}"
         git push --force-with-lease origin "${{ inputs.pr-branch }}"
         echo "URL:  $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls"
-        response=$(curl -X 'POST' \
+        response=$(curl -s -S -X 'POST' \
           "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls" \
           -H 'accept: application/json' \
           -H 'Authorization: token ${{ inputs.token }}' \
@@ -114,7 +114,7 @@ runs:
       run: |
           echo "Settig auto merge for PR $PR_NUMBER"
           echo "URL: $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge"
-          response=$(curl -X 'POST' \
+          response=$(curl -s -S -X 'POST' \
             "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge" \
             -H 'accept: application/json' \
             -H 'Authorization: token ${{ inputs.token }}' \
