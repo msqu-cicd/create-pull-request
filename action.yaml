@@ -59,16 +59,21 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - run: |
-        git config --global user.name "${{ inputs.commit-user }}" >> $GITHUB_OUTPUT
-        git config --global user.email "${{ inputs.commit-email }}" >> $GITHUB_OUTPUT
+    - name: "Configure git"
       shell: bash
-      name: "Configure git"
+      env:
+        COMMIT_USER: ${{ inputs.commit-user }}
+        COMMIT_EMAIL: ${{ inputs.commit-email }}
+      run: |
+        git config --global user.name "$COMMIT_USER" >> $GITHUB_OUTPUT
+        git config --global user.email "$COMMIT_EMAIL" >> $GITHUB_OUTPUT
     - name: "Pre-setup"
+      shell: bash
+      env:
+        PR_BRANCH: ${{ inputs.pr-branch }}
       run: |
         git fetch --all
-        git checkout -b "${{ inputs.pr-branch }}"
-      shell: bash
+        git checkout -b "$PR_BRANCH"
     - name: "Check changes"
       id: git
       shell: bash
@@ -84,47 +89,57 @@ runs:
       shell: bash
       env:
         REPO: ${{ github.repository }}
+        TOKEN: ${{ inputs.token }}
+        ADD_PATHS: ${{ inputs.add-paths }}
+        ADD_PATTERNS: ${{ inputs.add-patterns }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        PR_BRANCH: ${{ inputs.pr-branch }}
+        PR_TITLE: ${{ inputs.pr-title }}
+        PR_BODY: ${{ inputs.pr-body }}
+        PR_BASE: ${{ inputs.base }}
+        PR_ASSIGNEE: ${{ inputs.pr-assignee }}
       run: |
-        git add ${{ inputs.add-paths }} ${{ inputs.add-patterns }}
-        git commit -m "${{ inputs.commit-message }}"
-        git push --force-with-lease origin "${{ inputs.pr-branch }}"
+        git add $ADD_PATHS $ADD_PATTERNS
+        git commit -m "$COMMIT_MESSAGE"
+        git push --force-with-lease origin "$PR_BRANCH"
+        payload=$(jq -n \
+          --arg assignee "$PR_ASSIGNEE" \
+          --arg base "$PR_BASE" \
+          --arg body "$PR_BODY" \
+          --arg head "$PR_BRANCH" \
+          --arg title "$PR_TITLE" \
+          '{assignee: $assignee, base: $base, body: $body, head: $head, title: $title}')
         echo "URL:  $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls"
         response=$(curl -s -S -X 'POST' \
           "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls" \
           -H 'accept: application/json' \
-          -H 'Authorization: token ${{ inputs.token }}' \
+          -H @- \
           -H 'Content-Type: application/json' \
-          -d '{
-          "assignee": "${{ inputs.pr-asignee }}",
-          "base": "${{ inputs.base }}",
-          "body": "${{ inputs.pr-body }}",
-          "head": "${{ inputs.pr-branch }}",
-          "title": "${{ inputs.pr-title }}"
-          }')
-        # echo $response | jq .
-        pr_number=$(echo $response | jq -r '.number')
+          -d "$payload" <<<"Authorization: token $TOKEN")
+        pr_number=$(jq -r '.number' <<<"$response")
         echo "PR Number: $pr_number"
-        echo pr_number=$pr_number >> $GITHUB_OUTPUT
+        echo "pr_number=$pr_number" >> $GITHUB_OUTPUT
     - name: "Auto merge PR"
       shell: bash
       if: steps.git.outputs.changes == 'true' && steps.commit.outputs.pr_number != 'null'
       env:
         PR_NUMBER: ${{ steps.commit.outputs.pr_number }}
         REPO: ${{ github.repository }}
+        TOKEN: ${{ inputs.token }}
       run: |
           echo "Settig auto merge for PR $PR_NUMBER"
           echo "URL: $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge"
           response=$(curl -s -S -X 'POST' \
             "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge" \
             -H 'accept: application/json' \
-            -H 'Authorization: token ${{ inputs.token }}' \
+            -H @- \
             -H 'Content-Type: application/json' \
             -d '{
             "Do": "squash",
             "merge_when_checks_succeed": true,
             "delete_branch_after_merge": true
-            }')
-          echo $response
+            }' <<<"Authorization: token $TOKEN")
+          echo "$response"
 branding:
   icon: 'check'
   color: 'blue'
