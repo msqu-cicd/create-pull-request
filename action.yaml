@@ -110,18 +110,27 @@ runs:
           --arg title "$PR_TITLE" \
           '{assignee: $assignee, base: $base, body: $body, head: $head, title: $title}')
         echo "URL:  $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls"
-        response=$(curl -s -S -X 'POST' \
+        if ! response=$(curl -s -S --fail-with-body -X 'POST' \
           "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls" \
           -H 'accept: application/json' \
           -H @- \
           -H 'Content-Type: application/json' \
-          -d "$payload" <<<"Authorization: token $TOKEN")
+          -d "$payload" <<<"Authorization: token $TOKEN"); then
+          echo "PR creation failed:"
+          echo "$response"
+          exit 1
+        fi
         pr_number=$(jq -r '.number' <<<"$response")
+        if [[ -z "$pr_number" || "$pr_number" == 'null' ]]; then
+          echo "No PR number in the API response:"
+          echo "$response"
+          exit 1
+        fi
         echo "PR Number: $pr_number"
         echo "pr_number=$pr_number" >> $GITHUB_OUTPUT
     - name: "Auto merge PR"
       shell: bash
-      if: steps.git.outputs.changes == 'true' && steps.commit.outputs.pr_number != 'null'
+      if: inputs.pr-automerge == 'true' && steps.git.outputs.changes == 'true' && steps.commit.outputs.pr_number != '' && steps.commit.outputs.pr_number != 'null'
       env:
         PR_NUMBER: ${{ steps.commit.outputs.pr_number }}
         REPO: ${{ github.repository }}
@@ -129,7 +138,7 @@ runs:
       run: |
           echo "Settig auto merge for PR $PR_NUMBER"
           echo "URL: $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge"
-          response=$(curl -s -S -X 'POST' \
+          if ! response=$(curl -s -S --fail-with-body -X 'POST' \
             "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge" \
             -H 'accept: application/json' \
             -H @- \
@@ -138,7 +147,11 @@ runs:
             "Do": "squash",
             "merge_when_checks_succeed": true,
             "delete_branch_after_merge": true
-            }' <<<"Authorization: token $TOKEN")
+            }' <<<"Authorization: token $TOKEN"); then
+            echo "Auto merge failed:"
+            echo "$response"
+            exit 1
+          fi
           echo "$response"
 branding:
   icon: 'check'
