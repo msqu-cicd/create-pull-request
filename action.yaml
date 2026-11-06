@@ -65,20 +65,22 @@ runs:
         COMMIT_USER: ${{ inputs.commit-user }}
         COMMIT_EMAIL: ${{ inputs.commit-email }}
       run: |
-        git config --global user.name "$COMMIT_USER" >> $GITHUB_OUTPUT
-        git config --global user.email "$COMMIT_EMAIL" >> $GITHUB_OUTPUT
+        git config user.name "$COMMIT_USER"
+        git config user.email "$COMMIT_EMAIL"
     - name: "Pre-setup"
       shell: bash
       env:
         PR_BRANCH: ${{ inputs.pr-branch }}
       run: |
         git fetch --all
-        git checkout -b "$PR_BRANCH"
+        git checkout -B "$PR_BRANCH"
     - name: "Check changes"
       id: git
       shell: bash
+      env:
+        PR_CONDITION_CMD: ${{ inputs.pr-condition-cmd }}
       run: |
-        if [[ -n "$(git status --porcelain)" ]]; then
+        if [[ -n "$(bash -c "$PR_CONDITION_CMD")" ]]; then
           echo changes=true >> $GITHUB_OUTPUT
         else
           echo changes=false >> $GITHUB_OUTPUT
@@ -99,7 +101,13 @@ runs:
         PR_BASE: ${{ inputs.base }}
         PR_ASSIGNEE: ${{ inputs.pr-assignee }}
       run: |
-        git add $ADD_PATHS $ADD_PATTERNS
+        set -f
+        git add -- $ADD_PATHS $ADD_PATTERNS
+        set +f
+        if git diff --cached --quiet; then
+          echo "Nothing staged within the given paths, skipping PR creation"
+          exit 0
+        fi
         git commit -m "$COMMIT_MESSAGE"
         git push --force-with-lease origin "$PR_BRANCH"
         payload=$(jq -n \
