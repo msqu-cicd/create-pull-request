@@ -1,65 +1,81 @@
-#+TITLE: Gitea Action - Auto-PR
+#+TITLE: Gitea Action - Create PR
 
 [[LICENSE][https://img.shields.io/badge/license-GPL_3-green.svg]]
-[[https://develop.spacemacs.org][https://cdn.rawgit.com/syl20bnr/spacemacs/442d025779da2f62fc86c2082703697714db6514/assets/spacemacs-badge.svg]]
 
-Create a new PR on Gitea using Gitea Actions.
+Composite Gitea/Forgejo action that commits working-tree changes to a branch,
+creates a pull request through the Gitea API and optionally auto-merges it.
 
 ** Requirements
 
-This action recipe requires a token with the following permissions:
-#+BEGIN_SRC yaml
-  issue: read
-  repository: write
-  user: read
-#+END_SRC
+- The =token= input needs a token with the following permissions. Merging
+  additionally requires that the token's user may merge PRs in the repository
+  (branch protection rules apply):
+  #+BEGIN_SRC yaml
+    issue: read
+    repository: write
+    user: read
+  #+END_SRC
+- The =git push= uses the credentials persisted by =actions/checkout=, not the
+  =token= input. Either keep the default =persist-credentials: true= on the
+  checkout step with a token that may push, or configure the remote yourself
+  before calling this action.
+- The PR branch (=pr-branch=) is rebuilt from the current =HEAD= on every run
+  and force-pushed. Commits made directly on that branch are overwritten.
 
 ** Inputs
 
-*** url
-*Required* URL to the Gitea instance
+| Input            | Required | Default                        | Description                                           |
+|------------------+----------+--------------------------------+-------------------------------------------------------|
+| =base=           | yes      | =main=                         | Base branch to create the PR against                  |
+| =token=          | yes      |                                | Token for the Gitea API (PR creation and merge)       |
+| =add-paths=      | no       | =.=                            | Paths to add to the commit                            |
+| =add-patterns=   | no       | =*=                            | Pathspec patterns to add to the commit                |
+| =commit-message= | no       | =Automated commit=             | Commit message                                        |
+| =pr-branch=      | no       | =automated-pr=                 | Branch to create the PR from                          |
+| =pr-title=       | no       | =Automated PR=                 | PR title                                              |
+| =pr-body=        | no       | =Automated PR=                 | PR body                                               |
+| =pr-condition-cmd= | no     | =git status --porcelain=       | Command whose non-empty output triggers the PR        |
+| =pr-assignee=    | no       |                                | Assignee for the PR                                   |
+| =pr-automerge=   | no       | =false=                        | Squash-merge the PR once checks succeed               |
+| =commit-user=    | no       | =Forgejo Bot=                  | Username for the commit                               |
+| =commit-email=   | no       | =forgejo-bot@noreply.localhost= | Email for the commit                                 |
 
-*** token
-*Required* Personal access token to the Gitea instance
+** Outputs
 
-*** tea-version
-Tea CLI version (Default: 0.9.2)
-
-*** pr-label
-Issues label for the PR
-
-*** assignee
-User to assign the PR to
+| Output      | Description                       |
+|-------------+-----------------------------------|
+| =pr-number= | Number of the created pull request |
 
 ** Example
 
-A workflow to checkout repositories on the =bump/*= branches and create PRs to
-the Gitea server hosted on ~https://git.domain.tld~, using v0.9.2 of the tea CLI
-would look something like the following:
 #+BEGIN_SRC yaml
   ---
   name: Create PR
 
   on:
     workflow_dispatch:
-    push:
-      branches:
-        - bump/*
+    schedule:
+      - cron: '0 4 * * *'
 
   jobs:
-    create-bump-pr:
+    update-and-pr:
       runs-on: ubuntu-latest
 
       steps:
         - name: Checkout repository
-          uses: https://github.com/actions/checkout@v5
+          uses: https://github.com/actions/checkout@v7
+
+        - name: Make changes
+          run: ./scripts/update-something.sh
 
         - name: Create PR
-          uses: arifer612/Gitea-PR-action@v1
+          uses: CICD/create-pull-request@main
           with:
-            url: https://git.domain.tld
-            token: abcdefghijklmnopqrstuvwxyz
-            tea-version: 0.9.2
-            pr-label: bump
-            assignee: ${{ github.actor }}
+            base: main
+            token: ${{ secrets.CI_RUNNER_PAT }}
+            commit-message: 'Automated update'
+            pr-branch: automated-pr
+            pr-title: 'Automated update'
+            pr-assignee: ${{ github.actor }}
+            pr-automerge: 'true'
 #+END_SRC
