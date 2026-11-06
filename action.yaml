@@ -38,9 +38,9 @@ inputs:
     required: false
     default: git status --porcelain
   pr-assignee:
-    description: 'Default assignee for the Pull rrequest'
+    description: 'Default assignee for the Pull request'
     required: false
-    default: null
+    default: ''
   pr-automerge:
     description: 'Whether to automatically merge the Pull Request'
     required: false
@@ -52,9 +52,12 @@ inputs:
   commit-email:
     description: 'Email to use for commit'
     required: false
-    default: 'github@0815mail.de'
+    default: 'forgejo-bot@noreply.localhost'
 
-
+outputs:
+  pr-number:
+    description: 'Number of the created pull request'
+    value: ${{ steps.commit.outputs.pr_number }}
 
 runs:
   using: "composite"
@@ -144,7 +147,7 @@ runs:
         REPO: ${{ github.repository }}
         TOKEN: ${{ inputs.token }}
       run: |
-          echo "Settig auto merge for PR $PR_NUMBER"
+          echo "Setting auto merge for PR $PR_NUMBER"
           echo "URL: $GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge"
           if ! response=$(curl -s -S --fail-with-body -X 'POST' \
             "$GITHUB_SERVER_URL/api/v1/repos/$REPO/pulls/$PR_NUMBER/merge" \
